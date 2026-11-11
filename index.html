@@ -269,7 +269,8 @@ input[type=range].sky::-webkit-slider-thumb{border-color:var(--sky);box-shadow:0
 .msg.bot em{display:block;font-style:normal;font-size:.72rem;font-weight:600;color:var(--ink3);margin-bottom:2px;letter-spacing:.04em;text-transform:uppercase}
 .msg.sys{align-self:center;background:transparent;color:var(--ink3);font-size:.82rem}
 
-.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.set-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+@media(max-width:1180px){.set-grid{grid-template-columns:minmax(0,1fr)}}
 .set-card{border:1px solid var(--line);border-radius:20px;padding:18px}
 .set-card h4{display:flex;align-items:center;gap:10px;font-size:1rem;margin-bottom:12px}
 .set-card h4 .ti{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 13%,#fff);color:var(--c)}
@@ -702,7 +703,7 @@ details summary{cursor:pointer;color:var(--ink2);font-weight:500;font-size:.88re
         </section>
 
         <section class="card panel" id="tab-settings" hidden>
-          <h3>Voice and AI</h3><p class="sub">Settings are saved on this device.</p>
+          <h3>Voice and AI</h3><p class="sub">Settings are saved on this device. No sound? Tap <b>Sound test</b>: a beep then a voice. Beep but no voice means the tablet's text-to-speech needs setting up.</p>
           <div class="set-grid">
             <div class="set-card">
               <h4><span class="ti" style="--c:#10B981"><svg class="ic"><use href="#i-vol"/></svg></span>Robot voice</h4>
@@ -711,11 +712,12 @@ details summary{cursor:pointer;color:var(--ink2);font-weight:500;font-size:.88re
                 <button class="pill-btn on" data-rate="0.95" data-pitch="1.05">Friendly</button>
                 <button class="pill-btn" data-rate="0.82" data-pitch="1">Calm teacher</button>
                 <button class="pill-btn" data-rate="1.1" data-pitch="1.2">Energetic</button>
-                <button class="pill-btn" data-rate="0.9" data-pitch="0.6">Robot</button>
+                <button class="pill-btn" data-rate="0.9" data-pitch="0.75">Robot</button>
               </div>
-              <div class="kv"><span>Speed</span><input type="range" class="sky" id="rate" min="0.6" max="1.4" step="0.05" value="0.95"><output id="rateOut">0.95</output></div>
-              <div class="kv"><span>Pitch</span><input type="range" class="sky" id="pitch" min="0.5" max="1.6" step="0.05" value="1.05"><output id="pitchOut">1.05</output></div>
-              <div class="row-between" style="margin-top:14px"><button class="btn btn-soft" id="testVoice"><svg class="ic"><use href="#i-vol"/></svg>Test voice</button><span class="hint" id="voiceHint"></span></div>
+              <div class="kv"><span>Speed</span><input type="range" class="sky" id="rate" min="0.7" max="1.3" step="0.05" value="0.95"><output id="rateOut">0.95</output></div>
+              <div class="kv"><span>Pitch</span><input type="range" class="sky" id="pitch" min="0.7" max="1.4" step="0.05" value="1.05"><output id="pitchOut">1.05</output></div>
+              <label class="switch" style="margin-top:14px"><input type="checkbox" id="keepAwake"><span>Keep Bluetooth speaker awake (stops clicks and cut-off words)</span></label>
+              <div class="row-between" style="margin-top:14px"><button class="btn btn-soft" id="testVoice"><svg class="ic"><use href="#i-vol"/></svg>Sound test</button><span class="hint" id="voiceHint"></span></div>
             </div>
             <div class="set-card">
               <h4><span class="ti" style="--c:#7C5CFF"><svg class="ic"><use href="#i-brain"/></svg></span>Robot brain</h4>
@@ -783,7 +785,7 @@ const store = {
 const S = {
   key: store.get('key', ''), model: store.get('model', DEFAULT_MODEL), voiceURI: store.get('voice', ''),
   rate: parseFloat(store.get('rate', '0.95')), pitch: parseFloat(store.get('pitch', '1.05')),
-  handsFree: store.get('hands', '0') === '1', wiki: store.get('wiki', '1') === '1'
+  handsFree: store.get('hands', '0') === '1', wiki: store.get('wiki', '1') === '1', keepAwake: store.get('awake', '1') === '1'
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let toastTimer;
@@ -1015,6 +1017,7 @@ function voiceScore(v) {
   else if (lang.endsWith('-in')) s = 60; else if (lang.startsWith('en')) s = 30;
   if (/natural|neural|online|enhanced|premium/i.test(v.name)) s += 8;
   if (/google/i.test(v.name)) s += 3;
+  if (v.localService === false) s -= 5;     // streamed voices can stutter over Bluetooth
   return s;
 }
 function loadVoices() {
@@ -1027,7 +1030,7 @@ function loadVoices() {
   for (const [label, test] of groups) {
     const list = voices.filter(test); if (!list.length) continue;
     const og = document.createElement('optgroup'); og.label = label;
-    for (const v of list) { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; og.appendChild(o); }
+    for (const v of list) { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')' + (v.localService === false ? ' - online, may crackle' : ''); og.appendChild(o); }
     sel.appendChild(og);
   }
   sel.value = voices.some(v => v.voiceURI === S.voiceURI) ? S.voiceURI : '';
@@ -1039,10 +1042,39 @@ function currentVoice() {
   if (S.voiceURI) { const v = voices.find(v => v.voiceURI === S.voiceURI); if (v) return v; }
   return voices.length && voiceScore(voices[0]) >= 60 ? voices[0] : null;
 }
-function speakChunk(text) {
+let keepAC = null;
+function speakerKeepAlive() {
+  if (!S.keepAwake) { if (keepAC) { keepAC.close().catch(() => {}); keepAC = null; } return; }
+  try {
+    if (keepAC) { if (keepAC.state !== 'running') keepAC.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    keepAC = new AC();
+    const o = keepAC.createOscillator(), g = keepAC.createGain();
+    g.gain.value = 0;                         // silent, but keeps the audio link open so the speaker does not pop
+    o.connect(g); g.connect(keepAC.destination); o.start();
+  } catch (e) {}
+}
+document.addEventListener('pointerdown', speakerKeepAlive, { passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) speakerKeepAlive(); });
+let lastCancel = 0, speechErrShown = false;
+const SPEECH_ERRORS = {
+  'not-allowed': 'Tap any button on the page once, then try again. The browser blocks sound until you touch the page.',
+  'synthesis-failed': 'The tablet\'s text-to-speech engine failed. Check Settings > Text-to-speech > Speech Services by Google.',
+  'synthesis-unavailable': 'No text-to-speech engine. Install Speech Services by Google from the Play Store.',
+  'language-unavailable': 'Indian English voice data is missing. Install it in Speech Services by Google > Install voice data.',
+  'voice-unavailable': 'The chosen voice is not available. Pick "Auto" in Voice & AI.',
+  'audio-busy': 'Audio is busy (a call or another app). Close it and try again.',
+  'audio-hardware': 'Sound output problem. Check the Bluetooth speaker connection and media volume.',
+  'network': 'This voice needs internet. Connect to the internet or pick another voice.'
+};
+function cancelSpeech() { if (synth) { synth.cancel(); lastCancel = Date.now(); } }
+async function speakChunk(text) {
+  const wait = 250 - (Date.now() - lastCancel);
+  if (wait > 0) await sleep(wait);
   return new Promise(resolve => {
     text = speechFix(text);
     if (!synth) { setTimeout(resolve, 700 + text.length * 70); return; }
+    try { synth.resume(); } catch (e) {}
     const u = new SpeechSynthesisUtterance(text);
     const v = currentVoice();
     if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-IN';
@@ -1050,17 +1082,25 @@ function speakChunk(text) {
     let done = false;
     const finish = () => { if (done) return; done = true; clearTimeout(guard); resolve(); };
     const guard = setTimeout(finish, 5000 + text.length * 170 / S.rate);   // some browsers never fire onend
-    u.onend = finish; u.onerror = finish;
+    u.onend = finish;
+    u.onerror = e => {
+      const code = e && e.error;
+      if (code && code !== 'interrupted' && code !== 'canceled') {
+        console.warn('speech error', code);
+        if (!speechErrShown) { speechErrShown = true; setTimeout(() => speechErrShown = false, 8000); toast('No sound: ' + (SPEECH_ERRORS[code] || code)); }
+      }
+      finish();
+    };
     currentUtter = u;
     synth.speak(u);
   });
 }
 function setSpeaking(on) { speaking = on; $('face').classList.toggle('speaking', on); refreshMicUi(); }
-function stopSpeaking() { speakToken++; if (synth) synth.cancel(); lcdSpeech = false; setSpeaking(false); }
+function stopSpeaking() { speakToken++; cancelSpeech(); lcdSpeech = false; setSpeaking(false); }
 // steps: [{ text, cmd }]  cmd (optional) goes to the robot when that step starts speaking.
 async function sayScript(steps, source) {
   const token = ++speakToken;
-  if (synth) synth.cancel();
+  cancelSpeech();
   if (listening) { try { rec.abort(); } catch (e) {} }
   setSpeaking(true);
   for (const st of steps) {
@@ -1660,6 +1700,7 @@ $('lcdClr').onclick = () => { lcdSticky = null; send('PC'); lcdReady(); };
 
 // voice settings
 function setRatePitch(r, p) {
+  r = Math.min(1.3, Math.max(0.7, +r || 0.95)); p = Math.min(1.4, Math.max(0.7, +p || 1.05));
   S.rate = r; S.pitch = p; store.set('rate', r); store.set('pitch', p);
   $('rate').value = r; $('pitch').value = p; paintRange($('rate')); paintRange($('pitch'));
   $('rateOut').textContent = (+r).toFixed(2); $('pitchOut').textContent = (+p).toFixed(2);
@@ -1668,8 +1709,25 @@ function setRatePitch(r, p) {
 $('rate').oninput = e => setRatePitch(+e.target.value, S.pitch);
 $('pitch').oninput = e => setRatePitch(S.rate, +e.target.value);
 document.querySelectorAll('#styles .pill-btn').forEach(b => b.onclick = () => setRatePitch(+b.dataset.rate, +b.dataset.pitch));
-$('voiceSel').onchange = e => { S.voiceURI = e.target.value; store.set('voice', S.voiceURI); };
-$('testVoice').onclick = () => say('Namaste! I am the CognoSpace humanoid robot. This is how I sound.');
+$('voiceSel').onchange = e => { S.voiceURI = e.target.value; store.set('voice', S.voiceURI); cancelSpeech(); speakerKeepAlive(); };
+$('keepAwake').checked = S.keepAwake;
+$('keepAwake').onchange = e => { S.keepAwake = e.target.checked; store.set('awake', S.keepAwake ? '1' : '0'); speakerKeepAlive(); };
+function beep() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; const ac = new AC();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 880; g.gain.setValueAtTime(0.0001, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.4, ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5);
+    o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.55);
+    setTimeout(() => ac.close(), 900);
+  } catch (e) {}
+}
+$('testVoice').onclick = async () => {
+  beep();
+  await sleep(800);
+  if (synth && !synth.getVoices().length) toast('No voices found yet. Install Speech Services by Google and English (India) voice data.');
+  say('Namaste! I am the CognoSpace humanoid robot. This is how I sound.');
+};
 setRatePitch(S.rate, S.pitch);
 if (synth) { loadVoices(); synth.onvoiceschanged = loadVoices; } else loadVoices();
 
