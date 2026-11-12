@@ -204,6 +204,8 @@ footer.site .container{display:flex;align-items:center;justify-content:space-bet
 .mic-text span{display:block;color:var(--ink2);font-size:.88rem;line-height:1.35;min-height:2.6em}
 .inrow{display:flex;gap:8px}
 .field{flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:#FFFDFB;outline:none;font-weight:500;transition:border-color .15s,box-shadow .15s}
+.field:disabled{background:#F4F1EC;color:var(--ink3);cursor:not-allowed}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
 .field:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(255,141,0,.13)}
 .welcome{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;border-radius:16px;text-align:left;color:#fff;
   background:linear-gradient(120deg,#FF8D00,#FF6A3D 60%,#FF4D8D);box-shadow:0 10px 22px rgba(255,106,61,.28);transition:transform .15s}
@@ -1180,6 +1182,8 @@ function startListening() { if (!rec || listening || speaking || !connected) ret
 let lockedHintShown = false;
 function refreshMicUi() {
   const locked = !connected;
+  $('askInput').disabled = locked; $('askBtn').disabled = locked;
+  $('askInput').placeholder = locked ? 'Connect the robot to send messages' : 'Type a question or command...';
   $('micBtn').className = 'mic' + (listening ? ' listening' : thinking ? ' thinking' : speaking ? ' speaking' : locked ? ' locked' : '');
   $('micLabel').textContent = listening ? 'Listening...' : thinking ? 'Thinking...' : speaking ? 'Speaking...' :
     locked ? 'Connect the robot to talk' : (S.handsFree && micWanted ? 'Hands-free is on' : 'Tap and speak');
@@ -1649,6 +1653,7 @@ function endSession(byVoice) {
 async function handleUtterance(raw) {
   const q = raw.trim(); if (!q) return;
   goControl();
+  if (!connected) { toast('Connect the robot first. Messages work only when the robot is connected.'); return; }
   addChat('you', q);
   const t = (' ' + q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ')
     .replace(/\b(cogno|kogno|cognos|congno|cogni|cagno|cog no|kog no) ?space\b/g, 'cognospace')
@@ -1852,7 +1857,10 @@ $('heroWelcome').onclick = () => say(VIGNAN_TEXT, 'M,greet');
 $('expoWelcome').onclick = () => say(VIGNAN_TEXT, 'M,greet');
 document.querySelectorAll('#askChips .ask-chip').forEach(b => b.onclick = () => handleUtterance(b.textContent.trim()));
 document.querySelectorAll('#quickQs .pill-btn').forEach(b => b.onclick = () => handleUtterance(b.textContent.trim()));
-$('askBtn').onclick = () => { const v = $('askInput').value.trim(); if (v) { $('askInput').value = ''; handleUtterance(v); } };
+$('askBtn').onclick = () => {
+  if (!connected) { toast('Connect the robot first. Messages work only when the robot is connected.'); return; }
+  const v = $('askInput').value.trim(); if (v) { $('askInput').value = ''; handleUtterance(v); }
+};
 $('askInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('askBtn').click(); });
 $('clearChat').onclick = () => { $('chat').innerHTML = ''; history.length = 0; chatLog = []; store.set('chat', '[]'); };
 $('endBtn').onclick = () => endSession(false);
