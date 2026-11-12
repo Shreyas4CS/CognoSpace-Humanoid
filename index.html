@@ -186,6 +186,19 @@ footer.site .container{display:flex;align-items:center;justify-content:space-bet
 .mic.listening::before,.mic.listening::after{border-color:var(--red);animation:ring 1.4s ease-out infinite}.mic.listening::after{animation-delay:.7s}
 .mic.speaking{background:var(--sky);box-shadow:0 10px 24px rgba(27,167,255,.4)}
 .mic.thinking{background:var(--violet);box-shadow:0 10px 24px rgba(124,92,255,.4)}
+.mic.locked{background:#CFC8BE;box-shadow:none;color:#fff}
+.memrow{padding-top:12px;border-top:1px solid var(--line2)}
+.memchip{display:inline-flex;align-items:center;gap:8px;font-size:.88rem;font-weight:600;color:var(--ink2);cursor:pointer}
+.memchip svg{width:18px;height:18px;color:var(--violet)}
+.mem-box{border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px;background:#FCFAFF}
+.mem-list{list-style:none;display:flex;flex-direction:column;gap:8px;margin:12px 0 8px}
+.mem-list li{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:12px;background:#fff;border:1px solid #ECE7FA;font-size:.92rem}
+.mem-list li b{color:var(--violet);font-weight:600;flex:none}
+.mem-list li span{flex:1;min-width:0;word-wrap:break-word}
+.mem-list li button{flex:none;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--ink3)}
+.mem-list li button:hover{background:#FEECEC;color:var(--red)}
+.mem-list li button svg{width:15px;height:15px}
+.mem-empty{color:var(--ink3);font-size:.9rem;padding:6px 2px}
 @keyframes ring{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}
 .mic-text b{display:block;font-size:1.08rem}
 .mic-text span{display:block;color:var(--ink2);font-size:.88rem;line-height:1.35;min-height:2.6em}
@@ -561,7 +574,7 @@ details summary{cursor:pointer;color:var(--ink2);font-weight:500;font-size:.88re
         <div class="card talk">
           <div class="mic-row">
             <button class="mic" id="micBtn" aria-label="Microphone"><svg class="ic"><use href="#i-mic"/></svg></button>
-            <div class="mic-text"><b id="micLabel">Tap and speak</b><span id="heard">Say "Hi", "Dance", "Go forward" or ask any question.</span></div>
+            <div class="mic-text"><b id="micLabel">Tap and speak</b><span id="heard">Say "Hi", "Dance", "Turn L1 servo to 45" or ask any question.</span></div>
           </div>
           <div class="inrow">
             <input class="field" id="askInput" placeholder="Type a question or command..." autocomplete="off" maxlength="300">
@@ -574,6 +587,10 @@ details summary{cursor:pointer;color:var(--ink2);font-weight:500;font-size:.88re
           <div class="row-between">
             <label class="switch"><input type="checkbox" id="handsFree"><span>Hands-free</span></label>
             <button class="btn btn-red" id="stopBtn" style="padding:10px 16px"><svg class="ic"><use href="#i-stop"/></svg>Stop all</button>
+          </div>
+          <div class="row-between memrow">
+            <span class="memchip" id="memChip" title="Open memory"><svg class="ic"><use href="#i-brain"/></svg><span id="memCount">Memory is empty</span></span>
+            <button class="btn btn-soft" id="endBtn" style="padding:9px 14px"><svg class="ic"><use href="#i-reset"/></svg>End session</button>
           </div>
         </div>
       </aside>
@@ -698,7 +715,12 @@ details summary{cursor:pointer;color:var(--ink2);font-weight:500;font-size:.88re
 
         <section class="card panel" id="tab-chat" hidden>
           <div class="row-between" style="margin-bottom:12px"><div><h3>Conversation</h3><p class="sub" style="margin:0">Every reply is also shown on the LCD.</p></div>
-            <button class="btn btn-soft" id="clearChat" style="padding:8px 14px">Clear</button></div>
+            <button class="btn btn-soft" id="clearChat" style="padding:8px 14px">Clear chat</button></div>
+          <div class="mem-box">
+            <div class="row-between"><b style="display:flex;align-items:center;gap:8px"><svg class="ic" style="color:var(--violet)"><use href="#i-brain"/></svg>Robot memory</b><span class="hint">Saved on this device only</span></div>
+            <ul class="mem-list" id="memList"></ul>
+            <p class="hint">Say "Remember my name is Ravi", "Remember this person's name is Priya" or "Remember that the prize show is at 4 pm". <b>End session</b> erases everything.</p>
+          </div>
           <div class="chat" id="chat"><div class="msg sys">Ask something to start.</div></div>
         </section>
 
@@ -837,6 +859,11 @@ function setBle(state) {            // 'off' | 'busy' | 'on'
   $('connectBtn').className = 'btn ' + (state === 'on' ? 'btn-ok' : 'btn-primary');
   $('connectText').textContent = state === 'on' ? 'Connected' : state === 'busy' ? 'Wait...' : 'Connect';
   if (state !== 'on') setAction(state === 'busy' ? 'Connecting' : 'Offline');
+  if (state !== 'on') {                              // voice commands only work with the robot connected
+    micWanted = false;
+    if (listening && rec) { try { rec.abort(); } catch (e) {} }
+  }
+  if (typeof refreshMicUi === 'function') refreshMicUi();
 }
 function setAction(a) { $('actionText').textContent = String(a).toUpperCase(); }
 
@@ -849,6 +876,7 @@ async function openGatt() {
   tx.addEventListener('characteristicvaluechanged', e => onRobotMsg(dec.decode(e.target.value)));
   writeChain = Promise.resolve();
   setBle('on'); lcdReady(); send('Q');
+  if (S.handsFree) { micWanted = true; setTimeout(startListening, 600); }
 }
 async function connect() {
   if (!navigator.bluetooth) { showBanner(); toast('This browser cannot use Bluetooth'); return; }
@@ -1145,17 +1173,22 @@ if (SR) {
       if (e.results[i].isFinal) final += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
     }
     $('heard').textContent = '"' + (final || interim).trim() + '"';
-    if (final.trim()) { if (!S.handsFree) micWanted = false; handleUtterance(final.trim()); }
+    if (final.trim() && connected) { if (!S.handsFree) micWanted = false; handleUtterance(final.trim()); }
   };
 }
-function startListening() { if (!rec || listening || speaking) return; try { rec.start(); } catch (e) {} }
+function startListening() { if (!rec || listening || speaking || !connected) return; try { rec.start(); } catch (e) {} }
+let lockedHintShown = false;
 function refreshMicUi() {
-  $('micBtn').className = 'mic' + (listening ? ' listening' : thinking ? ' thinking' : speaking ? ' speaking' : '');
+  const locked = !connected;
+  $('micBtn').className = 'mic' + (listening ? ' listening' : thinking ? ' thinking' : speaking ? ' speaking' : locked ? ' locked' : '');
   $('micLabel').textContent = listening ? 'Listening...' : thinking ? 'Thinking...' : speaking ? 'Speaking...' :
-    (S.handsFree && micWanted ? 'Hands-free is on' : 'Tap and speak');
+    locked ? 'Connect the robot to talk' : (S.handsFree && micWanted ? 'Hands-free is on' : 'Tap and speak');
+  if (locked && !speaking && !thinking) { $('heard').textContent = 'Voice commands work after the robot is connected over Bluetooth.'; lockedHintShown = true; }
+  else if (!locked && lockedHintShown) { $('heard').textContent = 'Say "Hi", "Dance", "Turn L1 servo to 45" or ask any question.'; lockedHintShown = false; }
 }
 $('micBtn').onclick = () => {
   if (!SR) { toast('Voice input needs Chrome or Edge'); return; }
+  if (!connected) { toast('Connect the robot first. Voice commands work only when the robot is connected.'); return; }
   if (listening) { micWanted = false; rec.stop(); return; }
   if (speaking) { stopSpeaking(); send('TE'); lcdReady(); }
   micWanted = true; startListening();
@@ -1416,6 +1449,203 @@ function tryTime(t) {
   return null;
 }
 
+// ---- servo angles by voice: "turn L1 servo to 45", "set head to 120 degrees", "right elbow 90" ----
+const SERVO_VOICE = [
+  [/\b(l ?1|l one|el ?(1|one)|elle ?(1|one)|left (shoulder|1|one)( servo)?)\b/, 'lh1', 'L1 servo'],
+  [/\b(l ?2|l two|el ?(2|two)|elle ?(2|two)|left (elbow|2|two)( servo)?)\b/, 'lh2', 'L2 servo'],
+  [/\b(r ?1|r one|are ?(1|one)|our ?(1|one)|ar ?(1|one)|right (shoulder|1|one)( servo)?)\b/, 'rh1', 'R1 servo'],
+  [/\b(r ?2|r two|are ?(2|two)|our ?(2|two)|ar ?(2|two)|right (elbow|2|two)( servo)?)\b/, 'rh2', 'R2 servo'],
+  [/\b(head|neck)( servo)?\b/, 'head', 'head servo']
+];
+const NUM_WORDS = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40,
+  fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+function wordsToNumber(str) {        // "one hundred twenty five" -> "125"
+  return str.replace(/\b((?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|and)(?: |$))+/g, m => {
+    let total = 0, cur = 0, any = false;
+    for (const w of m.trim().split(' ')) {
+      if (w === 'and') continue;
+      if (w === 'hundred') { cur = (cur || 1) * 100; any = true; continue; }
+      if (w in NUM_WORDS) { cur += NUM_WORDS[w]; any = true; }
+    }
+    total += cur;
+    return any ? total + ' ' : m;
+  });
+}
+function tryServoCommand(t) {
+  for (const [re, key, label] of SERVO_VOICE) {
+    const m = t.match(re); if (!m) continue;
+    const rest = wordsToNumber(' ' + t.replace(m[0], ' ') + ' ');
+    const verb = /\b(turn|move|set|rotate|put|make|bring|servo|degree|degrees|angle|position|to|at)\b/.test(rest);
+    const n = rest.match(/\b(\d{1,3})\b/);
+    if (!n || !verb) continue;
+    const deg = parseInt(n[1], 10);
+    if (deg > 180) { say('Please say an angle from 0 to 180 degrees.'); return true; }
+    servo(key, deg);
+    say('Moving ' + label + ' to ' + deg + ' degrees.');
+    return true;
+  }
+  const all = t.match(/\ball (the )?servos?\b.*?\b(\d{1,3})\b/) || wordsToNumber(t).match(/\ball (the )?servos?\b.*?\b(\d{1,3})\b/);
+  if (all) {
+    const deg = parseInt(all[2], 10);
+    if (deg > 180) { say('Please say an angle from 0 to 180 degrees.'); return true; }
+    ['head', 'lh1', 'lh2', 'rh1', 'rh2'].forEach(k => servo(k, deg));
+    say('Moving all servos to ' + deg + ' degrees.');
+    return true;
+  }
+  return false;
+}
+
+// ---- memory: kept on this device until "End session" ----
+const MEM_KEY = 'mem';
+let mem = loadMem();
+function loadMem() {
+  try { const m = JSON.parse(store.get(MEM_KEY, '') || '{}'); return { name: m.name || null, person: m.person || null, facts: Array.isArray(m.facts) ? m.facts : [] }; }
+  catch (e) { return { name: null, person: null, facts: [] }; }
+}
+function saveMem() { store.set(MEM_KEY, JSON.stringify(mem)); renderMem(); }
+function memCount() { return (mem.name ? 1 : 0) + (mem.person ? 1 : 0) + mem.facts.length; }
+const titleCase = s => s.split(' ').filter(Boolean).slice(0, 4).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+function cleanName(s) {
+  return titleCase(s.replace(/[^A-Za-zऀ-ॿ\s.'-]/g, ' ').replace(/\b(please|okay|ok|thanks|thank you|robot)\b/gi, ' ').replace(/\s+/g, ' ').trim());
+}
+// "my" -> "your" so the robot can say it back naturally
+function toYou(s) {
+  return s.replace(/\bI am\b|\bI'm\b/gi, 'you are').replace(/\bI was\b/gi, 'you were').replace(/\bmyself\b/gi, 'yourself')
+    .replace(/\bmy\b/gi, 'your').replace(/\bmine\b/gi, 'yours').replace(/\bme\b/gi, 'you').replace(/\bI\b/g, 'you')
+    .replace(/\bour\b/gi, 'your').replace(/\bwe\b/gi, 'you').replace(/\bus\b/gi, 'you').trim();
+}
+const STOP = new Set(('what is are was were the a an of to do does did you your yours me my i who whom where when which how tell remember please about that this it its ' +
+  'be can could would will know any in on at for and with s there have has had again say said told ask asked us we our name').split(' '));
+const contentWords = s => toYou(s.toLowerCase()).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w && !STOP.has(w) && w.length > 1);
+const NOT_A_NAME = /^(a|an|the|from|in|at|fine|good|ok|okay|happy|sad|very|not|so|student|teacher|going|here|there|back|ready|tired|hungry|studying|in class|feeling)\b/i;
+
+function tryMemory(q, t) {
+  // forget / erase
+  if (/^ (please )?(forget|erase|clear|delete) (everything|all|it all|your memory|memory|all memory) $/.test(t) || /^ end (the )?session $/.test(t)) { endSession(true); return true; }
+  if (/\bforget my name\b/.test(t)) { mem.name = null; saveMem(); say('Okay, I have forgotten your name.'); return true; }
+  if (/\bforget (this|that|the) (person|guest|visitor)( s)?( name)?\b/.test(t)) { mem.person = null; saveMem(); say('Okay, I have forgotten that person.'); return true; }
+  if (/^ (please )?forget (that|it|this|the last( thing)?) $/.test(t)) {
+    if (mem.facts.length) { const f = mem.facts.pop(); saveMem(); say('Okay, I forgot that ' + f.text + '.'); } else say('There is nothing to forget.');
+    return true;
+  }
+  const fg = q.match(/^\s*(?:please\s+)?forget\s+(?:about\s+|that\s+)?(.+?)[.!?]*$/i);
+  if (fg) {
+    const kw = contentWords(fg[1]);
+    const before = mem.facts.length;
+    if (kw.length) mem.facts = mem.facts.filter(f => !kw.every(w => contentWords(f.text).includes(w)));
+    if (mem.facts.length < before) { saveMem(); say('Okay, I have forgotten that.'); } else say('I did not have that in my memory.');
+    return true;
+  }
+
+  // remember ...
+  const rm = q.match(/^\s*(?:(?:hey|ok|okay|robot|please|so)[\s,]+)*(?:can you |could you |will you |would you )?(?:please\s+)?(?:remember|note down|note|don't forget|do not forget|keep in mind|save|memorise|memorize)\s*(?:that\b|:|,)?\s*(.*?)[.!?]*\s*$/i);
+  const plainName = q.match(/^\s*(?:(?:hi|hello|hey|namaste)[\s,!.]+)?(?:my name is|my name's|call me|i am called|people call me)\s+(.+?)[.!?]*\s*$/i);
+  if (plainName) {
+    const n = cleanName(plainName[1]);
+    if (n) { mem.name = n; saveMem(); say('Nice to meet you, ' + n + '! I will remember your name.', 'M,hello'); return true; }
+  }
+  if (rm) {
+    const c = rm[1].trim();
+    if (!c) { say('Sure! What should I remember? Say, remember that, and then the thing.'); return true; }
+    let mm;
+    if ((mm = c.match(/^(?:my name is|my name's|my name as|me as|call me)\s+(.+)$/i)) || ((mm = c.match(/^(?:i am|i'm)\s+(.+)$/i)) && mm[1].split(' ').length <= 3 && !NOT_A_NAME.test(mm[1]))) {
+      const n = cleanName(mm[1]);
+      if (n) { mem.name = n; saveMem(); say('Got it! Your name is ' + n + '. I will remember it.', 'M,nod'); return true; }
+    }
+    if ((mm = c.match(/^(?:this|that|the|my)\s+(?:person|man|woman|lady|boy|girl|guest|student|teacher|visitor|friend|sir|madam)(?:'s|s)?\s*(?:name)?\s*(?:is|as|=)?\s+(.+)$/i)) ||
+        (mm = c.match(/^(?:his|her|their)\s+name\s*(?:is|as)?\s+(.+)$/i)) || (mm = c.match(/^(?:this|that) is\s+(.+)$/i))) {
+      const n = cleanName(mm[1]);
+      if (n) { mem.person = n; saveMem(); say('Okay! This person is ' + n + '. I will remember.', 'M,nod'); return true; }
+    }
+    const text = toYou(c).replace(/^that\s+/i, '');
+    const existing = mem.facts.findIndex(f => f.text.toLowerCase() === text.toLowerCase());
+    if (existing >= 0) mem.facts.splice(existing, 1);
+    mem.facts.push({ text, at: Date.now() });
+    while (mem.facts.length > 50) mem.facts.shift();
+    saveMem();
+    say('Okay, I will remember that ' + text + '.', 'M,nod');
+    return true;
+  }
+
+  // recall
+  if (/\b(what is|what s|whats|tell me|say|do you know|do you remember) my name\b|\bwho am i\b|\bdo you (know|remember) me\b/.test(t)) {
+    say(mem.name ? 'Your name is ' + mem.name + '!' : 'You have not told me your name yet. Say: my name is, and then your name.', mem.name ? 'M,hello' : undefined);
+    return true;
+  }
+  if (/\b(what is|what s|whats|tell me|do you know|do you remember) (this |that |the )?(person s|persons|person|his|her|their|guest s|visitor s) name\b|^ who is (this|that)( person| guest| visitor)? $|\bwho is this person\b/.test(t)) {
+    say(mem.person ? 'This is ' + mem.person + '!' : 'I do not know this person yet. Say: remember this person\'s name is, and then the name.');
+    return true;
+  }
+  if (/\bwhat (do|did) you remember\b|\bwhat (did|have) i (ask|asked|told|tell) you\b|\bwhat do you know about me\b|\b(your|in your) memory\b|\bwhat all (do )?you remember\b/.test(t)) {
+    const items = [];
+    if (mem.name) items.push('your name is ' + mem.name);
+    if (mem.person) items.push('this person is ' + mem.person);
+    mem.facts.slice(-6).forEach(f => items.push(f.text));
+    if (!items.length) say('My memory is empty right now. Ask me to remember something!');
+    else say('I remember ' + (items.length === 1 ? 'that ' + items[0] : items.length + ' things. ' + items.map(x => x[0].toUpperCase() + x.slice(1)).join('. ')) + '.');
+    return true;
+  }
+  // a question that matches something the visitor asked me to remember
+  if (mem.facts.length && /\b(what|who|where|when|which|how|tell me|do you know|did i|is there|whose)\b/.test(t)) {
+    const qw = contentWords(q);
+    if (qw.length) {
+      let best = null, bestScore = 0;
+      for (const f of mem.facts) {
+        const fw = new Set(contentWords(f.text));
+        const hit = qw.filter(w => fw.has(w)).length;
+        const score = hit / qw.length;
+        if (hit && score > bestScore && (qw.length < 3 ? hit >= 1 : hit >= 2) && score >= 0.6) { best = f; bestScore = score; }
+      }
+      if (best) { say('You told me that ' + best.text + '.'); return true; }
+    }
+  }
+  return false;
+}
+function memoryContext() {
+  const items = [];
+  if (mem.name) items.push('The visitor\'s name is ' + mem.name + '.');
+  if (mem.person) items.push('The person with the visitor is ' + mem.person + '.');
+  mem.facts.forEach(f => items.push('The visitor asked you to remember: ' + f.text + '.'));
+  return items.length ? 'Things to remember about this session: ' + items.join(' ') : '';
+}
+function personalise(ans) {
+  if (!mem.name) return ans;
+  const first = mem.name.split(' ')[0];
+  return ans.replace(/^Hi! Hello!/, 'Hi ' + first + '!')
+            .replace(/^(Hello|Goodbye|Good morning|Good afternoon|Good evening|Good night|Namaste|You are welcome)!/, '$1, ' + first + '!');
+}
+function renderMem() {
+  const n = memCount();
+  $('memCount').textContent = n ? 'Remembering ' + n + (n === 1 ? ' thing' : ' things') : 'Memory is empty';
+  const ul = $('memList'); ul.innerHTML = '';
+  const add = (label, text, onDel) => {
+    const li = document.createElement('li');
+    const b = document.createElement('b'); b.textContent = label;
+    const sp = document.createElement('span'); sp.textContent = text;
+    const x = document.createElement('button'); x.setAttribute('aria-label', 'Forget this');
+    x.innerHTML = '<svg class="ic"><use href="#i-x"/></svg>'; x.onclick = onDel;
+    li.append(b, sp, x); ul.appendChild(li);
+  };
+  if (mem.name) add('Name', mem.name, () => { mem.name = null; saveMem(); });
+  if (mem.person) add('Person', mem.person, () => { mem.person = null; saveMem(); });
+  mem.facts.forEach((f, i) => add('Note', f.text, () => { mem.facts.splice(i, 1); saveMem(); }));
+  if (!n) { const li = document.createElement('li'); li.className = 'mem-empty'; li.style.cssText = 'background:none;border:none'; li.textContent = 'Nothing yet.'; ul.appendChild(li); }
+}
+function endSession(byVoice) {
+  if (!byVoice && !confirm('End this session?\n\nThis erases the robot\'s memory (names and notes) and the conversation on this device.')) return;
+  stopAll();
+  mem = { name: null, person: null, facts: [] }; saveMem();
+  chatLog = []; store.set('chat', '[]'); $('chat').innerHTML = '';
+  history.length = 0;
+  if (nano.session) { try { nano.session.destroy(); } catch (e) {} nano.session = null; }
+  awaitingDetail = false;
+  lcdSticky = null; send('PC');
+  addChat('sys', 'New session started. Memory erased.');
+  toast('Session ended. All memory erased from this device.');
+  setTimeout(() => say('Session ended. My memory is now empty. Thank you!', 'M,bye'), 150);
+}
+
 async function handleUtterance(raw) {
   const q = raw.trim(); if (!q) return;
   goControl();
@@ -1432,6 +1662,9 @@ async function handleUtterance(raw) {
     if (/\b(yes|yeah|yep|ok|okay|sure|please)\b/.test(t)) return sayScript(PARTS_TOUR);
     if (/^ (no|nope|no thanks|not now) $/.test(t)) return say('Okay! Ask me anything about Vignan, CognoSpace or STEM!');
   }
+  if (/^ (stop|halt|freeze) $/.test(t)) { stopAll(); addChat('sys', 'Stopped'); return; }
+  if (tryMemory(q, t)) return;
+  if (tryServoCommand(t)) return;
   for (const [re, fn] of COMMANDS) if (re.test(t)) { if (fn(t) !== false) return; }
 
   const m = tryMath(q); if (m) return say(m);
@@ -1441,7 +1674,7 @@ async function handleUtterance(raw) {
   for (const [re, answer, cmd, core] of QA) {
     if (!re.test(t)) continue;
     if (!core && words > 7 && (hasKey || nano.status === 'available')) break;   // long question + an AI is available: let it answer fully
-    return say(answer, cmd || undefined);
+    return say(personalise(answer), cmd || undefined);
   }
   if (/^ (yes|yeah|ok|okay|sure) $/.test(t)) return say('Great!', 'M,yes');
   if (/^ (no|nope) $/.test(t)) return say('Okay, no problem.', 'M,no');
@@ -1453,7 +1686,10 @@ async function thinkAndAnswer(q, t) {
   stopSpeaking();
   const token = speakToken;
   thinking = true; refreshMicUi();
-  setEye(7); lcdPage(['Let me think...']); lcdSpeech = true; send('T|Let me think...');
+  setEye(7); send('M,think');
+  lcdPage(['Hmm...', 'Let me think...']); lcdSpeech = true; send('T|Hmm...|Let me think...');
+  setSpeaking(true);
+  const thinkSpeech = speakChunk(pick(['Hmm, let me think.', 'Hmm, let me think about that.', 'Hmm, good question. Let me think.']));
   let answer = null, source = '';
   if (S.key) {
     try { answer = await askGemini(q); source = 'Gemini'; layer('lyGem', 'on', 'Connected (' + S.model + ').'); }
@@ -1470,6 +1706,7 @@ async function thinkAndAnswer(q, t) {
   if (!answer && S.wiki) {
     try { answer = await askWiki(q, t); if (answer) source = 'Encyclopedia'; } catch (e) { console.warn('wiki failed', e); }
   }
+  await thinkSpeech;                                         // let the "hmm" finish before the answer
   thinking = false; setEye(0);
   if (token !== speakToken) { refreshMicUi(); return; }       // stopped or interrupted meanwhile
   if (!answer) answer = pick(['That is a great question! I am still learning about that. Ask me about Vignan, CognoSpace, robotics or science!',
@@ -1483,7 +1720,7 @@ const history = [];
 async function geminiCall(model, contents) {
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': S.key },
-    body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, contents })
+    body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT + (memoryContext() ? ' ' + memoryContext() : '') }] }, contents })
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error((data.error && data.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
@@ -1558,7 +1795,8 @@ async function nanoSession() {
 }
 async function askNano(q) {
   const s = await nanoSession();
-  const out = await Promise.race([s.prompt(q), sleep(20000).then(() => { throw new Error('timeout'); })]);
+  const ctx = memoryContext();
+  const out = await Promise.race([s.prompt(ctx ? ctx + '\n\nQuestion: ' + q : q), sleep(20000).then(() => { throw new Error('timeout'); })]);
   return String(out || '').trim() || null;
 }
 $('nanoBtn').onclick = async () => {
@@ -1591,7 +1829,9 @@ async function askWiki(q, t) {
 /* =====================================================================
    UI WIRING
    ===================================================================== */
-function addChat(who, text, source) {
+let chatLog = (() => { try { const a = JSON.parse(store.get('chat', '[]')); return Array.isArray(a) ? a : []; } catch (e) { return []; } })();
+function addChat(who, text, source, restoring) {
+  if (!restoring) { chatLog.push({ who, text, source: source || '' }); while (chatLog.length > 80) chatLog.shift(); store.set('chat', JSON.stringify(chatLog)); }
   const c = $('chat'), d = document.createElement('div');
   d.className = 'msg ' + who;
   if (who === 'bot' && source) { const em = document.createElement('em'); em.textContent = source; d.appendChild(em); }
@@ -1614,11 +1854,16 @@ document.querySelectorAll('#askChips .ask-chip').forEach(b => b.onclick = () => 
 document.querySelectorAll('#quickQs .pill-btn').forEach(b => b.onclick = () => handleUtterance(b.textContent.trim()));
 $('askBtn').onclick = () => { const v = $('askInput').value.trim(); if (v) { $('askInput').value = ''; handleUtterance(v); } };
 $('askInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('askBtn').click(); });
-$('clearChat').onclick = () => { $('chat').innerHTML = ''; history.length = 0; };
+$('clearChat').onclick = () => { $('chat').innerHTML = ''; history.length = 0; chatLog = []; store.set('chat', '[]'); };
+$('endBtn').onclick = () => endSession(false);
+$('memChip').onclick = () => { showTab('chat'); window.scrollTo({ top: document.querySelector('main').offsetTop - 70, behavior: 'smooth' }); };
+if (chatLog.length) { $('chat').innerHTML = ''; chatLog.forEach(m => addChat(m.who, m.text, m.source, true)); }
+renderMem();
 $('handsFree').checked = S.handsFree;
 $('handsFree').onchange = e => {
   S.handsFree = e.target.checked; store.set('hands', S.handsFree ? '1' : '0');
-  if (S.handsFree) { micWanted = true; startListening(); } else { micWanted = false; if (listening) rec.stop(); }
+  if (S.handsFree && !connected) toast('Hands-free starts listening once the robot is connected.');
+  if (S.handsFree) { micWanted = connected; startListening(); } else { micWanted = false; if (listening) rec.stop(); }
   refreshMicUi();
 };
 
